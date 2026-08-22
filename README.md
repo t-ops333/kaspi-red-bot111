@@ -1,1 +1,0 @@
-# kaspi-red-bot111
