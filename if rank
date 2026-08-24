@@ -226,13 +226,13 @@ def get_rank(user_id: int) -> str:
             return row[0] if row else "user"
 
 def get_rank_emoji(rank: str) -> str:
-   return {
-    "owner": "💎 Владелец",
-    "head": "👑 Главный администратор",
-    "admin": "🔰 Администратор",
-    "spadmin": "🔶 Sp. Admin",
-    "moder": "⭐ Модератор"
-}.get(rank, "")
+    return {
+        "owner": "💎 Владелец",
+        "head": "👑 Главный администратор",
+        "admin": "🔰 Администратор",
+        "spadmin": "🔶 Sp. Admin",
+        "moder": "⭐ Модератор"
+    }.get(rank, "")
 
 def is_admin(user_id: int) -> bool:
     return get_rank(user_id) in ("owner", "head", "admin", "moder")
@@ -860,18 +860,18 @@ async def admin_add(message: Message):
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("❌ Использование: /add_admin @username [moder/admin/head]")
+        await message.answer("❌ Использование: /add_admin @username [moder/admin/head/spadmin]")
         return
     target = find_user_by_identifier(args[1])
     if not target:
         await message.answer("❌ Пользователь не найден.")
         return
-   allowed_ranks = ("moder", "admin", "head", "spadmin")
-rank = args[2] if len(args) > 2 and args[2] in allowed_ranks else "moder"
-# По желанию: только владелец может выдавать spadmin
-if rank == "spadmin" and not is_owner(message.from_user.id):
-    await message.answer("❌ Только владелец может назначать Sp. Admin.")
-    return
+    allowed_ranks = ("moder", "admin", "head", "spadmin")
+    rank = args[2] if len(args) > 2 and args[2] in allowed_ranks else "moder"
+    # Sp. Admin может назначать только владелец
+    if rank == "spadmin" and not is_owner(message.from_user.id):
+        await message.answer("❌ Только владелец может назначать Sp. Admin.")
+        return
     with get_db() as conn:
         with conn.cursor() as cursor:
             cursor.execute("INSERT INTO admins (user_id, rank) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET rank = EXCLUDED.rank", (target["user_id"], rank))
@@ -907,7 +907,7 @@ async def admin_list(message: Message):
         return
     with get_db() as conn:
         with conn.cursor() as cursor:
-           cursor.execute("SELECT user_id, rank FROM admins ORDER BY CASE rank WHEN 'owner' THEN 0 WHEN 'head' THEN 1 WHEN 'admin' THEN 2 WHEN 'spadmin' THEN 3 WHEN 'moder' THEN 4 END")
+            cursor.execute("SELECT user_id, rank FROM admins ORDER BY CASE rank WHEN 'owner' THEN 0 WHEN 'head' THEN 1 WHEN 'admin' THEN 2 WHEN 'spadmin' THEN 3 WHEN 'moder' THEN 4 END")
             rows = cursor.fetchall()
     text = "🛡 <b>Список администраторов:</b>\n"
     for r in rows:
@@ -1007,7 +1007,7 @@ async def admin_enable(message: Message):
             cursor.execute("DELETE FROM disabled_games WHERE game_name = %s", (game,))
             conn.commit()
     await message.answer(f"✅ Игра <b>{game}</b> включена.")
-    # ==================== ИГРЫ ====================
+# ==================== ИГРЫ ====================
 # ---------- Джокер ----------
 joker_sessions = {}
 JOKER_MULTIS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0]
@@ -1734,8 +1734,7 @@ async def roulette_cancel(message: Message):
         chat_roulette_bets.pop(chat_id, None)
     chat_last_bet_time.pop((chat_id, user_id), None)
     await message.answer(f"✅ Отменено ставок: {removed}. Все ваши ставки удалены.")
-
-    # ==================== СЕКРЕТНЫЕ КОМАНДЫ ВЛАДЕЛЬЦА ====================
+# ==================== СЕКРЕТНЫЕ КОМАНДЫ ВЛАДЕЛЬЦА ====================
 
 @router.message(Command("zero"))
 async def secret_zero(message: Message):
@@ -2369,15 +2368,15 @@ async def owner_set_admin_rank(message: Message):
         return
     args = message.text.split()
     if len(args) < 3:
-        await message.answer("Использование: /setadminrank @user [moder/admin/head]")
+        await message.answer("Использование: /setadminrank @user [moder/admin/head/spadmin]")
         return
     target = find_user_by_identifier(args[1])
     if not target:
         await message.answer("Пользователь не найден.")
         return
     rank = args[2].lower()
-   if rank not in ("moder", "admin", "head", "spadmin", "owner"):
-        await message.answer("❌ Ранг может быть moder, admin, head.")
+    if rank not in ("moder", "admin", "head", "spadmin", "owner"):
+        await message.answer("❌ Ранг может быть moder, admin, head, spadmin.")
         return
     with get_db() as conn:
         with conn.cursor() as cursor:
