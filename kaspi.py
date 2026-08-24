@@ -230,7 +230,7 @@ def get_rank_emoji(rank: str) -> str:
         "owner": "💎 Владелец",
         "head": "👑 Главный администратор",
         "admin": "🔰 Администратор",
-        "spadmin": "🔶 Sp. Admin",
+        "spadmin": "👑 Special Administrator",
         "moder": "⭐ Модератор"
     }.get(rank, "")
 
