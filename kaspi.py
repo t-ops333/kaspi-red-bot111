@@ -907,7 +907,7 @@ async def admin_list(message: Message):
         return
     with get_db() as conn:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT user_id, rank FROM admins ORDER BY CASE rank WHEN 'owner' THEN 0 WHEN 'head' THEN 1 WHEN 'admin' THEN 2 WHEN 'spadmin' THEN 3 WHEN 'moder' THEN 4 END")
+           cursor.execute("SELECT user_id, rank FROM admins ORDER BY CASE rank WHEN 'owner' THEN 0 WHEN 'head' THEN 1 WHEN 'spadmin' THEN 2 WHEN 'admin' THEN 3 WHEN 'moder' THEN 4 END")
             rows = cursor.fetchall()
     text = "🛡 <b>Список администраторов:</b>\n"
     for r in rows:
