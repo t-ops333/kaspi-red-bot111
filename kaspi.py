@@ -1007,7 +1007,7 @@ async def admin_info(message: Message):
 
 @router.message(F.text.lower().startswith("выдать "))
 async def admin_quick_give(message: Message):
-    if not is_moder_or_above(message.from_user.id):
+    if not is_admin_or_above(message.from_user.id):
         return
     args = message.text.split()
     if len(args) < 3 or not args[2].isdigit():
@@ -1024,7 +1024,7 @@ async def admin_quick_give(message: Message):
 
 @router.message(Command("take"))
 async def admin_take(message: Message):
-    if not is_moder_or_above(message.from_user.id):
+    if not is_admin_or_above(message.from_user.id):
         return
     args = message.text.split()
     if len(args) < 3 or not args[2].isdigit():
