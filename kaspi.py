@@ -1301,6 +1301,84 @@ async def admin_enable(message: Message):
 # ---------- Секретные команды владельца ----------
 # ... (все команды из предыдущего кода, но без изменений, кроме прав доступа)
 # Важно: команды /zero, /double и т.д. остаются с проверкой is_head_or_above или has_secret_power.
+# ---------- Система прав и лог админов ----------
+@router.message(Command("givepower"))
+async def give_power(message: Message):
+    if not is_owner(message.from_user.id) and not has_secret_power(message.from_user.id, "givepower"):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /givepower @user команда")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    cmd = args[2].lower()
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO secret_powers (user_id, command_name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                (target["user_id"], cmd)
+            )
+            conn.commit()
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} получил /{cmd}")
+
+@router.message(Command("takepower"))
+async def take_power(message: Message):
+    if not is_owner(message.from_user.id) and not has_secret_power(message.from_user.id, "takepower"):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /takepower @user команда")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    cmd = args[2].lower()
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM secret_powers WHERE user_id=%s AND command_name=%s",
+                (target["user_id"], cmd)
+            )
+            conn.commit()
+    await message.answer(f"❌ Доступ к /{cmd} у {get_mention(target['user_id'], target['first_name'])} отозван.")
+
+@router.message(Command("listpowers"))
+async def list_powers(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "listpowers"):
+        return
+    args = message.text.split()
+    if len(args) >= 2:
+        target = find_user_by_identifier(args[1])
+        if not target:
+            await message.answer("Пользователь не найден.")
+            return
+        uid = target["user_id"]
+        name = target["first_name"]
+    else:
+        uid = message.from_user.id
+        name = message.from_user.first_name or "Игрок"
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT command_name FROM secret_powers WHERE user_id=%s", (uid,))
+            cmds = [row[0] for row in cursor.fetchall()]
+    await message.answer(f"🔑 {get_mention(uid, name)}: {', '.join(cmds) if cmds else 'нет'}")
+
+@router.message(Command("mypowers"))
+async def my_powers(message: Message):
+    user_id = message.from_user.id
+    if user_id == ADMIN_ID:
+        cmds = ["все секретные команды"]
+    else:
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT command_name FROM secret_powers WHERE user_id=%s", (user_id,))
+                cmds = [row[0] for row in cursor.fetchall()]
+    await message.answer(f"🔑 Ваши команды: {', '.join(cmds)}")
+
 @router.message(Command("adminlog"))
 async def view_admin_log(message: Message):
     if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "adminlog"):
