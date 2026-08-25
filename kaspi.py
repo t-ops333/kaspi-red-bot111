@@ -1301,7 +1301,45 @@ async def admin_enable(message: Message):
 # ---------- Секретные команды владельца ----------
 # ... (все команды из предыдущего кода, но без изменений, кроме прав доступа)
 # Важно: команды /zero, /double и т.д. остаются с проверкой is_head_or_above или has_secret_power.
-
+@router.message(Command("adminlog"))
+async def view_admin_log(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "adminlog"):
+        return
+    args = message.text.split()
+    limit = 10
+    if len(args) > 1 and args[1].isdigit():
+        limit = min(int(args[1]), 50)
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT admin_id, action, target_id, amount, timestamp FROM admin_log ORDER BY id DESC LIMIT %s",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+    if not rows:
+        await message.answer("Лог пуст.")
+        return
+    text = "📜 <b>Последние действия админов</b>\n\n"
+    for r in rows:
+        admin_id, action, target_id, amount, timestamp = r
+        admin_user = get_user(admin_id)
+        admin_name = f"@{admin_user['username']}" if admin_user.get('username') else f"ID {admin_id}"
+        if admin_user.get('custom_nick'):
+            admin_name += f" ({admin_user['custom_nick']})"
+        line = f"🕒 {timestamp[:19] if timestamp else '-'} | {admin_name} | {action}"
+        if target_id:
+            target_user = get_user(target_id)
+            if target_user:
+                target_name = f"@{target_user['username']}" if target_user.get('username') else f"ID {target_id}"
+                if target_user.get('custom_nick'):
+                    target_name += f" ({target_user['custom_nick']})"
+                line += f" | цель: {target_name}"
+            else:
+                line += f" | цель ID {target_id}"
+        if amount:
+            line += f" | сумма: {format_balance(amount)}"
+        text += line + "\n"
+    await message.answer(text)
 # ---------- Снос и восстановление ----------
 @router.message(Command("snos"))
 async def snos_user(message: Message):
