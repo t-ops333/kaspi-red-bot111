@@ -970,8 +970,18 @@ async def cmd_vip_buy(message: Message):
 async def clan_cmd(message: Message):
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование:\n/clan создать <название>\n/clan вступить <название или id>\n/clan выйти\n/clan инфо\n/clan казна <сумма> — пополнить\n/clan снять <сумма> — снять (владелец)\n/clan топ")
+        await message.answer(
+            "🏰 <b>Кланы</b>\n\n"
+            "Создать клан: /clan создать <название> (англ., 100 млн ₸)\n"
+            "Вступить: /clan вступить <название или id>\n"
+            "Выйти: /clan выйти\n"
+            "Инфо о своём клане: /clan инфо\n"
+            "Пополнить казну: /clan казна <сумма>\n"
+            "Снять из казны (владелец): /clan снять <сумма>\n"
+            "Топ кланов: /clan топ"
+        )
         return
+    # дальше обработка остальных подкоманд
     sub = args[1].lower()
     if sub == "создать":
         if len(args) < 3:
