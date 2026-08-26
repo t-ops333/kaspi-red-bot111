@@ -510,7 +510,6 @@ def get_case_price(case_type: str) -> int:
     return prices.get(case_type.lower(), 0)
 
 def get_case_reward(case_type: str):
-    # упрощённая логика для примера
     r = random.random()
     if case_type == "деревянный":
         if r < 0.50: return ("nothing", 0)
@@ -519,7 +518,48 @@ def get_case_reward(case_type: str):
         elif r < 0.97: return ("money", 50000000)
         elif r < 0.99: return ("money", 100000000)
         else: return ("money", 1000000000)
-    # для остальных можно добавить отдельно
+    elif case_type == "железный":
+        if r < 0.45: return ("nothing", 0)
+        elif r < 0.70: return ("money", 30000000)
+        elif r < 0.85: return ("money", 80000000)
+        elif r < 0.95: return ("money", 200000000)
+        elif r < 0.99: return ("money", 500000000)
+        else: return ("vip", 6)
+    elif case_type == "золотой":
+        if r < 0.40: return ("nothing", 0)
+        elif r < 0.65: return ("money", 100000000)
+        elif r < 0.80: return ("money", 300000000)
+        elif r < 0.93: return ("money", 800000000)
+        elif r < 0.99: return ("money", 2000000000)
+        else: return ("vip", 24)
+    elif case_type == "алмазный":
+        if r < 0.35: return ("nothing", 0)
+        elif r < 0.60: return ("money", 500000000)
+        elif r < 0.80: return ("money", 2000000000)
+        elif r < 0.93: return ("money", 5000000000)
+        elif r < 0.99: return ("money", 10000000000)
+        else: return ("vip", 72)
+    elif case_type == "легендарный":
+        if r < 0.30: return ("nothing", 0)
+        elif r < 0.55: return ("money", 2000000000)
+        elif r < 0.75: return ("money", 10000000000)
+        elif r < 0.90: return ("money", 50000000000)
+        elif r < 0.99: return ("money", 100000000000)
+        else: return ("vip", 168)
+    elif case_type == "мифический":
+        if r < 0.25: return ("nothing", 0)
+        elif r < 0.50: return ("money", 10000000000)
+        elif r < 0.70: return ("money", 100000000000)
+        elif r < 0.85: return ("money", 500000000000)
+        elif r < 0.97: return ("money", 1000000000000)
+        else: return ("vip", 336)
+    elif case_type == "космический":
+        if r < 0.20: return ("nothing", 0)
+        elif r < 0.45: return ("money", 100000000000)
+        elif r < 0.70: return ("money", 1000000000000)
+        elif r < 0.85: return ("money", 10000000000000)
+        elif r < 0.97: return ("money", 100000000000000)
+        else: return ("vip", 720)
     return ("nothing", 0)
 
 # ---------- Биткоин ----------
@@ -530,6 +570,49 @@ def btc_to_tenge(btc_amount: float) -> int:
 def tenge_to_btc(tenge_amount: int) -> float:
     rate = int(get_setting("btc_rate", "1000000000"))
     return tenge_amount / rate
+
+# ---------- Майнинг ----------
+def get_mining_hash(user_id: int) -> float:
+    total_hash = 0.0
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT card_type, count FROM miners WHERE user_id = %s", (user_id,))
+            rows = cursor.fetchall()
+    hash_rates = {
+        "gt710": 0.00001,
+        "rx580": 0.00005,
+        "rtx3060": 0.0002,
+        "rtx3080": 0.0005,
+        "rtx3090": 0.002
+    }
+    for card_type, cnt in rows:
+        total_hash += hash_rates.get(card_type, 0) * cnt
+    return total_hash
+
+def update_mining_accumulated(user_id: int):
+    # Обновить накопленный BTC на основе прошедшего времени с last_update
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT accumulated_btc, last_update FROM mining_stats WHERE user_id = %s", (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                # Если нет записи, создаём
+                cursor.execute("INSERT INTO mining_stats (user_id, accumulated_btc, last_update) VALUES (%s, 0, %s) ON CONFLICT (user_id) DO NOTHING", (user_id, datetime.now()))
+                conn.commit()
+                return 0.0
+            accumulated, last_update = row
+            if last_update is None:
+                last_update = datetime.now()
+                cursor.execute("UPDATE mining_stats SET last_update = %s WHERE user_id = %s", (last_update, user_id))
+                conn.commit()
+                return accumulated or 0.0
+            delta_hours = (datetime.now() - last_update).total_seconds() / 3600
+            hash_rate = get_mining_hash(user_id)
+            mined = hash_rate * delta_hours
+            new_accumulated = float(accumulated or 0) + mined
+            cursor.execute("UPDATE mining_stats SET accumulated_btc = %s, last_update = %s WHERE user_id = %s", (new_accumulated, datetime.now(), user_id))
+            conn.commit()
+            return new_accumulated
 
 # ---------- Депозит ----------
 def deposit_interest(start_time: datetime, amount: int) -> int:
@@ -975,13 +1058,12 @@ async def clan_cmd(message: Message):
             "Создать клан: /clan создать <название> (англ., 100 млн ₸)\n"
             "Вступить: /clan вступить <название или id>\n"
             "Выйти: /clan выйти\n"
-            "Инфо о своём клане: /clan инфо\n"
+            "Инфо: /clan инфо\n"
             "Пополнить казну: /clan казна <сумма>\n"
             "Снять из казны (владелец): /clan снять <сумма>\n"
             "Топ кланов: /clan топ"
         )
         return
-    # дальше обработка остальных подкоманд
     sub = args[1].lower()
     if sub == "создать":
         if len(args) < 3:
@@ -1120,7 +1202,19 @@ async def safe_cmd(message: Message):
 async def case_cmd(message: Message):
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование: /кейс купить <тип> или /кейс открыть <тип>")
+        await message.answer(
+            "📦 <b>Кейсы</b>\n\n"
+            "Купить: /кейс купить <тип>\n"
+            "Открыть: /кейс открыть <тип>\n"
+            "Список кейсов:\n"
+            "• деревянный — 10 млн\n"
+            "• железный — 100 млн\n"
+            "• золотой — 1 млрд\n"
+            "• алмазный — 10 млрд\n"
+            "• легендарный — 100 млрд\n"
+            "• мифический — 1 трлн\n"
+            "• космический — 100 трлн"
+        )
         return
     sub = args[1].lower()
     if sub == "купить":
@@ -1154,7 +1248,6 @@ async def case_cmd(message: Message):
                 if not row or row[0] <= 0:
                     await message.answer("У тебя нет такого кейса.")
                     return
-                # уменьшаем количество
                 if row[0] == 1:
                     cursor.execute("DELETE FROM cases_inventory WHERE user_id = %s AND case_type = %s", (message.from_user.id, case_type))
                 else:
@@ -1166,6 +1259,19 @@ async def case_cmd(message: Message):
         elif reward_type == "money":
             update_balance(message.from_user.id, reward_value)
             await message.answer(f"Открыл кейс... выпало {format_balance(reward_value)}!")
+        elif reward_type == "vip":
+            hours = reward_value
+            user = get_user(message.from_user.id)
+            current_until = user.get('vip_until')
+            if current_until and current_until > datetime.now():
+                new_until = current_until + timedelta(hours=hours)
+            else:
+                new_until = datetime.now() + timedelta(hours=hours)
+            with get_db() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("UPDATE users SET vip_until = %s WHERE user_id = %s", (new_until, message.from_user.id))
+                    conn.commit()
+            await message.answer(f"Открыл кейс... выпал VIP на {hours} часов!")
         else:
             await message.answer("Что-то пошло не так.")
 
@@ -1211,46 +1317,67 @@ async def mining_cmd(message: Message):
         await message.answer(f"Куплено {count} {card_type}.")
     else:
         # показать ферму
+        accumulated = update_mining_accumulated(message.from_user.id)
         with get_db() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT card_type, count FROM miners WHERE user_id = %s", (message.from_user.id,))
                 rows = cursor.fetchall()
-                cursor.execute("SELECT accumulated_btc, last_update FROM mining_stats WHERE user_id = %s", (message.from_user.id,))
-                stats = cursor.fetchone()
         if not rows:
             await message.answer("У тебя нет видеокарт. Купи через /майнинг купить")
             return
-        total_hash = 0
+        total_hash = get_mining_hash(message.from_user.id)
         text = "⛏ Твоя майнинг ферма\n"
         for r in rows:
             card_type, cnt = r
             hash_rate = {"gt710": 0.00001, "rx580": 0.00005, "rtx3060": 0.0002, "rtx3080": 0.0005, "rtx3090": 0.002}.get(card_type, 0)
-            total_hash += hash_rate * cnt
             text += f"- {card_type} ×{cnt}: {hash_rate*cnt:.8f} BTC/час\n"
         text += f"Всего: {total_hash:.8f} BTC/час\n"
-        if stats:
-            text += f"Накоплено: {stats[0]:.8f} BTC\n"
-        else:
-            text += "Накоплено: 0 BTC\n"
+        text += f"Накоплено: {accumulated:.8f} BTC\n"
+        text += "Забрать: /забрать майнинг"
         await message.answer(text)
 
 @router.message(Command("забрать"))
 async def collect_mining(message: Message):
     # Забрать накопленный BTC
-    with get_db() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT accumulated_btc FROM mining_stats WHERE user_id = %s", (message.from_user.id,))
-            row = cursor.fetchone()
-    if not row or row[0] <= 0:
+    accumulated = update_mining_accumulated(message.from_user.id)
+    if accumulated <= 0:
         await message.answer("Нет накопленного BTC.")
         return
-    btc_amount = float(row[0])
+    btc_amount = float(accumulated)
     with get_db() as conn:
         with conn.cursor() as cursor:
             cursor.execute("UPDATE mining_stats SET accumulated_btc = 0 WHERE user_id = %s", (message.from_user.id,))
             cursor.execute("UPDATE users SET btc = btc + %s WHERE user_id = %s", (btc_amount, message.from_user.id))
             conn.commit()
     await message.answer(f"Забрано {btc_amount:.8f} BTC.")
+
+@router.message(Command("продать"))
+async def sell_btc(message: Message):
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer("Использование: /продать <кол-во BTC в сатоши? или в BTC? Уточни>\nПока поддерживаем целые BTC? Давай в BTC: /продать 0.001")
+        return
+    # Для простоты: принимаем количество BTC в числовом формате
+    try:
+        btc_amount = float(args[1])
+    except:
+        await message.answer("Неверное число.")
+        return
+    user = get_user(message.from_user.id)
+    if user['btc'] < btc_amount:
+        await message.answer("У тебя недостаточно BTC.")
+        return
+    rate = int(get_setting("btc_rate", "1000000000"))
+    tenge_amount = int(btc_amount * rate)
+    # Комиссия 2%
+    commission = int(tenge_amount * 0.02)
+    receive = tenge_amount - commission
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET btc = btc - %s, balance = balance + %s WHERE user_id = %s", (btc_amount, receive, message.from_user.id))
+            conn.commit()
+    await message.answer(f"Ты продал {btc_amount:.4f} BTC за {format_balance(receive)} (комиссия {format_balance(commission)}).")
+
 # ---------- Банк / Депозит ----------
 @router.message(F.text.lower() == "банк")
 async def bank_info(message: Message):
@@ -1312,7 +1439,7 @@ async def deposit_withdraw(message: Message):
             amount, start_time = row
             interest = deposit_interest(start_time, amount)
             total = amount + interest
-            commission = int(total * 0.02)  # 2%
+            commission = int(total * 0.02)
             to_balance = total - commission
             cursor.execute("DELETE FROM deposits WHERE user_id = %s", (user_id,))
             cursor.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s", (to_balance, user_id))
@@ -1324,20 +1451,6 @@ async def deposit_withdraw(message: Message):
         f"Комиссия (2%): {format_balance(commission)}\n"
         f"Зачислено на баланс: {format_balance(to_balance)}"
     )
-# ---------- Админ-команды (уже были, добавляем setbtc) ----------
-@router.message(Command("setbtc"))
-async def set_btc_rate(message: Message):
-    if not is_owner(message.from_user.id):
-        return
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit():
-        await message.answer("Использование: /setbtc [курс тенге за 1 BTC]")
-        return
-    rate = int(args[1])
-    set_setting("btc_rate", str(rate))
-    await message.answer(f"Курс BTC установлен: 1 BTC = {format_balance(rate)}")
-
-# Остальные админ-команды (addpromo, delpromo, setbal, info, выдать, take, resetbal, add_admin, remove_admin, add_moder, remove_moder, freeze, unfreeze, list_admins, setbonus, setcooldown, stats, broadcast, disable, enable) оставлены как в текущем коде. Убедись, что они есть.
 # ---------- Админ-команды ----------
 @router.message(Command("addpromo"))
 async def admin_addpromo(message: Message):
@@ -2434,7 +2547,7 @@ async def unsnos_user(message: Message):
             conn.commit()
     log_admin_action(message.from_user.id, f"unsnos {target['user_id']} (rank: {previous_rank}, balance: {previous_balance})")
     await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} восстановлен: {get_rank_emoji(previous_rank)}, баланс {format_balance(previous_balance)}.")
-# ==================== ИГРЫ ====================
+    # ==================== ИГРЫ ====================
 # ---------- Джокер ----------
 joker_sessions = {}
 JOKER_MULTIS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0]
