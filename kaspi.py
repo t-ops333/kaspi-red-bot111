@@ -1049,22 +1049,23 @@ async def cmd_vip_buy(message: Message):
     await message.answer(f"✅ VIP активирован до {new_until.strftime('%d.%m.%Y %H:%M')}")
 
 # ---------- Кланы ----------
-@router.message(Command("clan"))
+@router.message(F.text.lower().in_(["clan", "клан"]))
 async def clan_cmd(message: Message):
     args = message.text.split()
     if len(args) < 2:
         await message.answer(
             "🏰 <b>Кланы</b>\n\n"
-            "Создать клан: /clan создать <название> (англ., 100 млн ₸)\n"
-            "Вступить: /clan вступить <название или id>\n"
-            "Выйти: /clan выйти\n"
-            "Инфо: /clan инфо\n"
-            "Пополнить казну: /clan казна <сумма>\n"
-            "Снять из казны (владелец): /clan снять <сумма>\n"
-            "Топ кланов: /clan топ"
+            "Создать клан: clan создать <название> (англ., 100 млн ₸)\n"
+            "Вступить: clan вступить <название или id>\n"
+            "Выйти: clan выйти\n"
+            "Инфо: clan инфо\n"
+            "Пополнить казну: clan казна <сумма>\n"
+            "Снять из казны (владелец): clan снять <сумма>\n"
+            "Топ кланов: clan топ"
         )
         return
     sub = args[1].lower()
+    # ... остальной код без изменений (создать, вступить и т.д.)
     if sub == "создать":
         if len(args) < 3:
             await message.answer("Укажи название клана (только английские буквы).")
@@ -1180,8 +1181,9 @@ async def clan_cmd(message: Message):
         await message.answer(text)
 
 # ---------- Сейф и кейсы ----------
-@router.message(Command("сейф"))
+@router.message(F.text.lower().in_(["сейф", "safe"]))
 async def safe_cmd(message: Message):
+    # тот же код, что и раньше
     user = get_user(message.from_user.id)
     with get_db() as conn:
         with conn.cursor() as cursor:
@@ -1198,14 +1200,14 @@ async def safe_cmd(message: Message):
         text += f"💎 BTC: {btc:.4f}\n"
     await message.answer(text)
 
-@router.message(Command("кейс"))
+@router.message(F.text.lower().in_(["кейс", "case"]))
 async def case_cmd(message: Message):
     args = message.text.split()
     if len(args) < 2:
         await message.answer(
             "📦 <b>Кейсы</b>\n\n"
-            "Купить: /кейс купить <тип>\n"
-            "Открыть: /кейс открыть <тип>\n"
+            "Купить: кейс купить <тип>\n"
+            "Открыть: кейс открыть <тип>\n"
             "Список кейсов:\n"
             "• деревянный — 10 млн\n"
             "• железный — 100 млн\n"
@@ -1218,6 +1220,9 @@ async def case_cmd(message: Message):
         return
     sub = args[1].lower()
     if sub == "купить":
+        # остальной код без изменений
+    elif sub == "открыть":
+        # остальной код без изменений
         if len(args) < 3:
             await message.answer("Укажи тип кейса. Доступные: деревянный, железный, золотой, алмазный, легендарный, мифический, космический")
             return
@@ -1276,21 +1281,69 @@ async def case_cmd(message: Message):
             await message.answer("Что-то пошло не так.")
 
 # ---------- Биткоин и майнинг ----------
-@router.message(Command("btc"))
+@router.message(F.text.lower().in_(["btc", "биткоин"]))
 async def btc_cmd(message: Message):
+    # тот же код, что и раньше
     user = get_user(message.from_user.id)
     rate = int(get_setting("btc_rate", "1000000000"))
     await message.answer(f"Курс BTC: 1 BTC = {format_balance(rate)}\nТвой BTC: {user['btc']:.4f}")
 
-@router.message(Command("майнинг"))
+@router.message(F.text.lower().in_(["майнинг", "mining"]))
 async def mining_cmd(message: Message):
     args = message.text.split()
-    if len(args) > 1 and args[1] == "купить":
+    
+    # Если введена команда "майнинг" без аргументов → показать ферму
+    if len(args) < 2:
+        # Показать ферму (накопленный BTC, карты, хешрейт)
+        accumulated = update_mining_accumulated(message.from_user.id)
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT card_type, count FROM miners WHERE user_id = %s", (message.from_user.id,))
+                rows = cursor.fetchall()
+        if not rows:
+            await message.answer(
+                "⛏ У тебя нет видеокарт.\n"
+                "Купи через команду:\n"
+                "майнинг купить <тип> <кол-во>\n\n"
+                "Доступные типы:\n"
+                "• gt710 — 1 000 000 ₸ (0.00001 BTC/час)\n"
+                "• rx580 — 10 000 000 ₸ (0.00005 BTC/час)\n"
+                "• rtx3060 — 100 000 000 ₸ (0.0002 BTC/час)\n"
+                "• rtx3080 — 500 000 000 ₸ (0.0005 BTC/час)\n"
+                "• rtx3090 — 2 000 000 000 ₸ (0.002 BTC/час)"
+            )
+            return
+
+        total_hash = get_mining_hash(message.from_user.id)
+        text = "⛏ <b>Твоя майнинг ферма</b>\n\n"
+        hash_rates = {
+            "gt710": 0.00001,
+            "rx580": 0.00005,
+            "rtx3060": 0.0002,
+            "rtx3080": 0.0005,
+            "rtx3090": 0.002
+        }
+        for card_type, cnt in rows:
+            rate = hash_rates.get(card_type, 0)
+            text += f"• {card_type} ×{cnt}: {rate * cnt:.8f} BTC/час\n"
+        text += f"\nВсего: {total_hash:.8f} BTC/час\n"
+        text += f"Накоплено: {accumulated:.8f} BTC\n"
+        text += "Забрать: <b>забрать</b>"
+        await message.answer(text)
+        return
+
+    # Если второй аргумент "купить" или "buy" → покупка карт
+    if args[1].lower() in ["купить", "buy"]:
         if len(args) < 4:
-            await message.answer("Использование: /майнинг купить <тип> <кол-во>")
+            await message.answer("❌ Использование: майнинг купить <тип> <кол-во>")
             return
         card_type = args[2].lower()
-        count = int(args[3]) if args[3].isdigit() else 0
+        try:
+            count = int(args[3])
+        except ValueError:
+            await message.answer("❌ Количество должно быть числом.")
+            return
+
         prices = {
             "gt710": 1000000,
             "rx580": 10000000,
@@ -1299,23 +1352,32 @@ async def mining_cmd(message: Message):
             "rtx3090": 2000000000
         }
         if card_type not in prices:
-            await message.answer("Неизвестный тип карты. Доступно: gt710, rx580, rtx3060, rtx3080, rtx3090")
+            await message.answer("❌ Неизвестный тип карты.\nДоступно: gt710, rx580, rtx3060, rtx3080, rtx3090")
             return
         if count < 1:
-            await message.answer("Количество должно быть больше 0.")
+            await message.answer("❌ Количество должно быть больше 0.")
             return
+
         total_cost = prices[card_type] * count
         user = get_user(message.from_user.id)
         if user['balance'] < total_cost:
-            await message.answer("Недостаточно средств.")
+            await message.answer(f"❌ Недостаточно средств. Нужно {format_balance(total_cost)}")
             return
+
         update_balance(message.from_user.id, -total_cost)
         with get_db() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("INSERT INTO miners (user_id, card_type, count) VALUES (%s,%s,%s) ON CONFLICT (user_id, card_type) DO UPDATE SET count = count + %s", (message.from_user.id, card_type, count, count))
+                cursor.execute(
+                    "INSERT INTO miners (user_id, card_type, count) VALUES (%s,%s,%s) "
+                    "ON CONFLICT (user_id, card_type) DO UPDATE SET count = count + %s",
+                    (message.from_user.id, card_type, count, count)
+                )
                 conn.commit()
-        await message.answer(f"Куплено {count} {card_type}.")
-    else:
+        await message.answer(f"✅ Куплено {count} шт. {card_type}.\nСписано: {format_balance(total_cost)}")
+        return
+
+    # Если аргумент не распознан — подсказка
+    await message.answer("❌ Неизвестная команда.\nИспользуй:\nмайнинг — посмотреть ферму\nмайнинг купить <тип> <кол-во>")
         # показать ферму
         accumulated = update_mining_accumulated(message.from_user.id)
         with get_db() as conn:
@@ -1323,7 +1385,7 @@ async def mining_cmd(message: Message):
                 cursor.execute("SELECT card_type, count FROM miners WHERE user_id = %s", (message.from_user.id,))
                 rows = cursor.fetchall()
         if not rows:
-            await message.answer("У тебя нет видеокарт. Купи через /майнинг купить")
+            await message.answer("У тебя нет видеокарт. Купи через майнинг купить")
             return
         total_hash = get_mining_hash(message.from_user.id)
         text = "⛏ Твоя майнинг ферма\n"
@@ -1336,8 +1398,9 @@ async def mining_cmd(message: Message):
         text += "Забрать: /забрать майнинг"
         await message.answer(text)
 
-@router.message(Command("забрать"))
+@router.message(F.text.lower().in_(["забрать", "collect"]))
 async def collect_mining(message: Message):
+    # тот же код
     # Забрать накопленный BTC
     accumulated = update_mining_accumulated(message.from_user.id)
     if accumulated <= 0:
@@ -1351,25 +1414,26 @@ async def collect_mining(message: Message):
             conn.commit()
     await message.answer(f"Забрано {btc_amount:.8f} BTC.")
 
-@router.message(Command("продать"))
+@router.message(F.text.lower().in_(["продать", "sell"]))
 async def sell_btc(message: Message):
     args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit():
-        await message.answer("Использование: /продать <кол-во BTC в сатоши? или в BTC? Уточни>\nПока поддерживаем целые BTC? Давай в BTC: /продать 0.001")
-        return
-    # Для простоты: принимаем количество BTC в числовом формате
-    try:
-        btc_amount = float(args[1])
-    except:
-        await message.answer("Неверное число.")
-        return
     user = get_user(message.from_user.id)
+    if len(args) > 1 and args[1].lower() in ["всё", "все", "all"]:
+        # продать весь BTC
+        btc_amount = user['btc']
+        if btc_amount <= 0:
+            await message.answer("У тебя нет BTC.")
+            return
+    else:
+        if len(args) < 2 or not args[1].isdigit():
+            await message.answer("Использование: продать <кол-во BTC> или продать всё")
+            return
+        btc_amount = float(args[1])
     if user['btc'] < btc_amount:
         await message.answer("У тебя недостаточно BTC.")
         return
     rate = int(get_setting("btc_rate", "1000000000"))
     tenge_amount = int(btc_amount * rate)
-    # Комиссия 2%
     commission = int(tenge_amount * 0.02)
     receive = tenge_amount - commission
     with get_db() as conn:
