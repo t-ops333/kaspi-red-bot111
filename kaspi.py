@@ -1114,7 +1114,7 @@ async def case_cmd(message: Message):
             with conn.cursor() as cursor:
                 cursor.execute(
                     "INSERT INTO cases_inventory (user_id, case_type, count) VALUES (%s,%s,1) "
-                    "ON CONFLICT (user_id, case_type) DO UPDATE SET count = count + 1",
+                    "ON CONFLICT (user_id, case_type) DO UPDATE SET count = cases_inventory.count + EXCLUDED.count",
                     (message.from_user.id, case_type)
                 )
                 conn.commit()
@@ -1227,7 +1227,7 @@ async def mining_cmd(message: Message):
             with conn.cursor() as cursor:
                 cursor.execute(
                     "INSERT INTO miners (user_id, card_type, count) VALUES (%s,%s,%s) "
-                    "ON CONFLICT (user_id, card_type) DO UPDATE SET count = count + %s",
+                    "ON CONFLICT (user_id, card_type) DO UPDATE SET count = miners.count + EXCLUDED.count",
                     (message.from_user.id, card_type, count, count)
                 )
                 conn.commit()
