@@ -1241,7 +1241,79 @@ async def collect_mining(message: Message):
             cursor.execute("UPDATE users SET btc = btc + %s WHERE user_id = %s", (btc_amount, message.from_user.id))
             conn.commit()
     await message.answer(f"Забрано {btc_amount:.8f} BTC.")
+# ---------- Банк / Депозит ----------
+@router.message(F.text.lower() == "банк")
+async def bank_info(message: Message):
+    user_id = message.from_user.id
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT amount, start_time FROM deposits WHERE user_id = %s", (user_id,))
+            row = cursor.fetchone()
+    if not row:
+        await message.answer("🏦 У вас нет открытого депозита.\nЧтобы открыть, введите: депозит [сумма]\nМинимальная сумма: 5 000 000 ₸")
+        return
+    amount, start_time = row
+    interest = deposit_interest(start_time, amount)
+    total = amount + interest
+    await message.answer(
+        f"🏦 Ваш депозит:\n"
+        f"💰 Сумма: {format_balance(amount)}\n"
+        f"📈 Начислено процентов: {format_balance(interest)}\n"
+        f"💎 Итого: {format_balance(total)}\n"
+        f"Комиссия за снятие: 2%\n"
+        f"Чтобы снять: снять депозит"
+    )
 
+@router.message(F.text.lower().startswith("депозит"))
+async def deposit_open(message: Message):
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await message.answer("Использование: депозит [сумма]\nМинимальная сумма: 5 000 000 ₸")
+        return
+    amount = int(parts[1])
+    if amount < 5000000:
+        await message.answer("❌ Минимальная сумма для депозита: 5 000 000 ₸")
+        return
+    user = get_user(message.from_user.id)
+    if user['balance'] < amount:
+        await message.answer("❌ Недостаточно средств.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM deposits WHERE user_id = %s", (message.from_user.id,))
+            if cursor.fetchone():
+                await message.answer("❌ У вас уже есть открытый депозит. Сначала снимите его.")
+                return
+            update_balance(message.from_user.id, -amount)
+            cursor.execute("INSERT INTO deposits (user_id, amount, start_time) VALUES (%s, %s, %s)", (message.from_user.id, amount, datetime.now()))
+            conn.commit()
+    await message.answer(f"✅ Депозит открыт на сумму {format_balance(amount)}.\nПроценты начисляются каждый час (0.05%).")
+
+@router.message(F.text.lower() == "снять депозит")
+async def deposit_withdraw(message: Message):
+    user_id = message.from_user.id
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT amount, start_time FROM deposits WHERE user_id = %s", (user_id,))
+            row = cursor.fetchone()
+            if not row:
+                await message.answer("❌ У вас нет открытого депозита.")
+                return
+            amount, start_time = row
+            interest = deposit_interest(start_time, amount)
+            total = amount + interest
+            commission = int(total * 0.02)  # 2%
+            to_balance = total - commission
+            cursor.execute("DELETE FROM deposits WHERE user_id = %s", (user_id,))
+            cursor.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s", (to_balance, user_id))
+            conn.commit()
+    await message.answer(
+        f"✅ Депозит закрыт.\n"
+        f"Сумма: {format_balance(amount)}\n"
+        f"Проценты: {format_balance(interest)}\n"
+        f"Комиссия (2%): {format_balance(commission)}\n"
+        f"Зачислено на баланс: {format_balance(to_balance)}"
+    )
 # ---------- Админ-команды (уже были, добавляем setbtc) ----------
 @router.message(Command("setbtc"))
 async def set_btc_rate(message: Message):
@@ -1256,6 +1328,1102 @@ async def set_btc_rate(message: Message):
     await message.answer(f"Курс BTC установлен: 1 BTC = {format_balance(rate)}")
 
 # Остальные админ-команды (addpromo, delpromo, setbal, info, выдать, take, resetbal, add_admin, remove_admin, add_moder, remove_moder, freeze, unfreeze, list_admins, setbonus, setcooldown, stats, broadcast, disable, enable) оставлены как в текущем коде. Убедись, что они есть.
+# ---------- Админ-команды ----------
+@router.message(Command("addpromo"))
+async def admin_addpromo(message: Message):
+    if not is_admin_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 4 or not args[2].isdigit() or not args[3].isdigit():
+        await message.answer("Использование: /addpromo [код] [сумма] [кол-во]")
+        return
+    code, amount, uses = args[1].strip(), int(args[2]), int(args[3])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("INSERT INTO promocodes (code, amount, uses) VALUES (%s,%s,%s) ON CONFLICT (code) DO UPDATE SET amount=EXCLUDED.amount, uses=EXCLUDED.uses",
+                           (code, amount, uses))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"addpromo {code} {amount} {uses}")
+    await message.answer(f"✅ Промокод <b>{code}</b> создан/обновлён: <b>{format_balance(amount)}</b>, исп: <b>{uses}</b>.")
+
+@router.message(Command("delpromo"))
+async def admin_delpromo(message: Message):
+    if not is_admin_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /delpromo [код]")
+        return
+    code = args[1].strip()
+    delete_promo(code)
+    log_admin_action(message.from_user.id, f"delpromo {code}")
+    await message.answer(f"✅ Промокод <b>{code}</b> удалён.")
+
+@router.message(Command("setbal"))
+async def admin_setbal(message: Message):
+    if not is_moder_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 3 or not args[2].isdigit():
+        await message.answer("Использование: /setbal @username [сумма]")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    new_balance = int(args[2])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance = %s WHERE user_id = %s", (new_balance, target["user_id"]))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"setbal {target['user_id']} {new_balance}")
+    await message.answer(f"✅ Баланс {get_mention(target['user_id'], target['first_name'])} установлен на <b>{format_balance(new_balance)}</b>.")
+
+@router.message(Command("info"))
+async def admin_info(message: Message):
+    if not is_moder_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /info @username")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    rank = get_rank(target['user_id'])
+    text = (f"👤 <b>{target['first_name']}</b>\n"
+            f"🆔 ID: {target['user_id']}\n"
+            f"👤 Username: @{target['username'] or 'нет'}\n"
+            f"📊 Ранг: {get_rank_emoji(rank)}\n"
+            f"💰 Баланс: <b>{format_balance(target['balance'])}</b>\n"
+            f"🎮 Игр: {target['games_played']} | Побед: {target['games_won']}\n"
+            f"🕒 Последний бонус: {target['last_bonus'] or 'никогда'}")
+    await message.answer(text)
+
+@router.message(F.text.lower().startswith("выдать "))
+async def admin_quick_give(message: Message):
+    if not is_admin_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 3 or not args[2].isdigit():
+        await message.answer("❌ Использование: выдать @username 5000")
+        return
+    target_str, amount = args[1], int(args[2])
+    target = find_user_by_identifier(target_str)
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    update_balance(target["user_id"], amount)
+    log_admin_action(message.from_user.id, f"выдать {target['user_id']} {amount}")
+    await message.answer(f"✅ Пользователю {get_mention(target['user_id'], target['first_name'])} выдано <b>{format_balance(amount)}</b>.")
+
+@router.message(Command("take"))
+async def admin_take(message: Message):
+    if not is_admin_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 3 or not args[2].isdigit():
+        await message.answer("❌ Использование: /take @username 500")
+        return
+    target_str, amount = args[1], int(args[2])
+    target = find_user_by_identifier(target_str)
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    update_balance(target["user_id"], -amount)
+    log_admin_action(message.from_user.id, f"take {target['user_id']} {amount}")
+    await message.answer(f"✅ У пользователя {get_mention(target['user_id'], target['first_name'])} списано <b>{format_balance(amount)}</b>.")
+
+@router.message(Command("resetbal"))
+async def admin_resetbal(message: Message):
+    if not is_admin_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Использование: /resetbal @username")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance = 4000 WHERE user_id = %s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"resetbal {target['user_id']}")
+    await message.answer(f"✅ Баланс {get_mention(target['user_id'], target['first_name'])} сброшен до 4000 ₸.")
+
+@router.message(Command("add_admin"))
+async def admin_add(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Использование: /add_admin @username [moder/admin/head/spadmin/chatowner]")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    allowed_ranks = ("moder", "admin", "head", "spadmin", "chatowner")
+    rank = args[2] if len(args) > 2 and args[2] in allowed_ranks else "moder"
+    if rank in ("spadmin", "chatowner") and not is_owner(message.from_user.id):
+        await message.answer("❌ Только владелец может назначать этот ранг.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("INSERT INTO admins (user_id, rank) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET rank = EXCLUDED.rank", (target["user_id"], rank))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"add_admin {target['user_id']} {rank}")
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} назначен {get_rank_emoji(rank)}.")
+
+@router.message(Command("remove_admin"))
+async def admin_remove(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Использование: /remove_admin @username")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Администратор не найден.")
+        return
+    if target["user_id"] == ADMIN_ID:
+        await message.answer("❌ Нельзя удалить владельца.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM admins WHERE user_id = %s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"remove_admin {target['user_id']}")
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} разжалован.")
+
+@router.message(Command("add_moder"))
+async def add_moder_cmd(message: Message):
+    if not (is_head_or_above(message.from_user.id) or get_rank(message.from_user.id) == "spadmin"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /add_moder @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("INSERT INTO admins (user_id, rank) VALUES (%s, 'moder') ON CONFLICT (user_id) DO UPDATE SET rank = 'moder'", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"add_moder {target['user_id']}")
+    await message.answer(f"⭐ {get_mention(target['user_id'], target['first_name'])} назначен модератором.")
+
+@router.message(Command("remove_moder"))
+async def remove_moder_cmd(message: Message):
+    if not (is_head_or_above(message.from_user.id) or get_rank(message.from_user.id) == "spadmin"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /remove_moder @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    if get_rank(target["user_id"]) != "moder":
+        await message.answer("❌ Пользователь не является модератором.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM admins WHERE user_id = %s AND rank = 'moder'", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"remove_moder {target['user_id']}")
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} снят с модератора.")
+
+@router.message(Command("freeze"))
+async def freeze_user(message: Message):
+    if not (is_head_or_above(message.from_user.id) or get_rank(message.from_user.id) == "spadmin"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /freeze @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    if target["user_id"] == ADMIN_ID:
+        await message.answer("❌ Нельзя заморозить владельца.")
+        return
+    if get_rank(target["user_id"]) in ("owner", "head", "admin", "spadmin"):
+        await message.answer("❌ Нельзя заморозить администратора.")
+        return
+    ban_until = datetime.now() + timedelta(hours=24)
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET is_banned = TRUE, ban_until = %s WHERE user_id = %s", (ban_until, target["user_id"]))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"freeze {target['user_id']} 24h")
+    await message.answer(f"🥶 {get_mention(target['user_id'], target['first_name'])} заморожен на 24 часа.")
+
+@router.message(Command("unfreeze"))
+async def unfreeze_user(message: Message):
+    if not (is_head_or_above(message.from_user.id) or get_rank(message.from_user.id) == "spadmin"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /unfreeze @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET is_banned = FALSE, ban_until = NULL WHERE user_id = %s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"unfreeze {target['user_id']}")
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} разморожен.")
+
+@router.message(Command("list_admins"))
+async def admin_list(message: Message):
+    if not is_moder_or_above(message.from_user.id):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id, rank FROM admins ORDER BY CASE rank WHEN 'owner' THEN 0 WHEN 'head' THEN 1 WHEN 'spadmin' THEN 2 WHEN 'admin' THEN 3 WHEN 'chatowner' THEN 4 WHEN 'moder' THEN 5 END")
+            rows = cursor.fetchall()
+    text = "🛡 <b>Список администраторов:</b>\n"
+    for r in rows:
+        u = get_user(r[0])
+        text += f"{get_rank_emoji(r[1])} {get_mention(r[0], u['first_name'])}\n"
+    await message.answer(text)
+
+@router.message(Command("setbonus"))
+async def admin_setbonus(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer(f"🎁 Текущий бонус: <b>{format_balance(int(get_setting('bonus_amount', '3000')))}</b>")
+        return
+    amount = int(args[1])
+    set_setting("bonus_amount", str(amount))
+    log_admin_action(message.from_user.id, f"setbonus {amount}")
+    await message.answer(f"✅ Бонус изменён на <b>{format_balance(amount)}</b>")
+
+@router.message(Command("setcooldown"))
+async def admin_setcooldown(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer("❌ Использование: /setcooldown 8")
+        return
+    hours = int(args[1])
+    set_setting("bonus_cooldown", str(hours))
+    log_admin_action(message.from_user.id, f"setcooldown {hours}")
+    await message.answer(f"✅ Кулдаун бонуса изменён на <b>{hours} ч.</b>")
+
+@router.message(Command("stats"))
+async def admin_stats(message: Message):
+    if not is_moder_or_above(message.from_user.id):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*), COALESCE(SUM(balance),0) FROM users")
+            users_count, total_balance = cursor.fetchone()
+    await message.answer(f"📊 <b>Статистика</b>\n👥 Пользователей: <b>{users_count}</b>\n💰 Общий баланс: <b>{format_balance(total_balance or 0)}</b>")
+
+@router.message(Command("broadcast"))
+async def admin_broadcast(message: Message):
+    if not is_admin_or_above(message.from_user.id):
+        return
+    text = message.text.replace("/broadcast", "").strip()
+    if not text:
+        await message.answer("❌ Использование: /broadcast текст")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id FROM users")
+            users = [row[0] for row in cursor.fetchall()]
+    success = 0
+    failed = 0
+    status_msg = await message.answer(f"📢 Рассылка началась (0/{len(users)})...")
+    for u_id in users:
+        try:
+            await bot.send_message(int(u_id), f"📢 <b>Объявление</b>\n\n{text}")
+            success += 1
+            await asyncio.sleep(0.05)
+        except:
+            failed += 1
+    await status_msg.edit_text(f"✅ Рассылка завершена!\n📤 Успешно: {success}\n❌ Ошибок: {failed}")
+
+@router.message(Command("disable"))
+async def admin_disable(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Использование: /disable [рулетка/джокер/мины/дуэль/coinflip]")
+        return
+    game = args[1].lower()
+    if game not in ["рулетка", "джокер", "мины", "дуэль", "coinflip"]:
+        await message.answer("❌ Неизвестная игра.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("INSERT INTO disabled_games (game_name) VALUES (%s) ON CONFLICT DO NOTHING", (game,))
+            conn.commit()
+    await message.answer(f"🚫 Игра <b>{game}</b> отключена.")
+
+@router.message(Command("enable"))
+async def admin_enable(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Использование: /enable [рулетка/джокер/мины/дуэль/coinflip]")
+        return
+    game = args[1].lower()
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM disabled_games WHERE game_name = %s", (game,))
+            conn.commit()
+    await message.answer(f"✅ Игра <b>{game}</b> включена.")
+
+# ---------- Секретные команды владельца и система прав ----------
+@router.message(Command("zero"))
+async def secret_zero(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "zero"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /zero @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance=0 WHERE user_id=%s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"zero {target['user_id']}")
+    await message.answer(f"✅ Баланс {get_mention(target['user_id'], target['first_name'])} обнулён.")
+
+@router.message(Command("double"))
+async def secret_double(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "double"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /double @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    new_bal = target["balance"] * 2
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance=%s WHERE user_id=%s", (new_bal, target["user_id"]))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"double {target['user_id']} -> {new_bal}")
+    await message.answer(f"✅ Баланс удвоен: {format_balance(new_bal)}")
+
+@router.message(Command("randomize"))
+async def secret_randomize(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "randomize"):
+        return
+    args = message.text.split()
+    if len(args) < 4:
+        await message.answer("Использование: /randomize @user мин макс")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    try:
+        lo, hi = int(args[2]), int(args[3])
+        bal = random.randint(lo, hi)
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("UPDATE users SET balance=%s WHERE user_id=%s", (bal, target["user_id"]))
+                conn.commit()
+        log_admin_action(message.from_user.id, f"randomize {target['user_id']} {lo}-{hi} -> {bal}")
+        await message.answer(f"✅ Случайный баланс: {format_balance(bal)}")
+    except ValueError:
+        await message.answer("❌ Диапазон должен быть числами.")
+
+@router.message(Command("transfer"))
+async def secret_transfer(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "transfer"):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /transfer сумма @user или /transfer @user сумма")
+        return
+    amount = None
+    target = None
+    if args[1].isdigit():
+        amount = int(args[1])
+        target = find_user_by_identifier(args[2])
+    else:
+        target = find_user_by_identifier(args[1])
+        if len(args) > 2 and args[2].isdigit():
+            amount = int(args[2])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    if amount is None:
+        await message.answer("Сумма должна быть числом.")
+        return
+    update_balance(target["user_id"], amount)
+    log_admin_action(message.from_user.id, f"transfer {target['user_id']} {amount}")
+    await message.answer(f"✅ Переведено {format_balance(amount)} пользователю {get_mention(target['user_id'], target['first_name'])}.")
+
+@router.message(Command("nick"))
+async def secret_nick(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "nick"):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /nick @user новое_имя")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    new_nick = " ".join(args[2:])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET first_name=%s WHERE user_id=%s", (new_nick, target["user_id"]))
+            conn.commit()
+    await message.answer(f"✅ Ник изменён на {new_nick}")
+
+@router.message(Command("curse"))
+async def secret_curse(message: Message):
+    if not is_owner(message.from_user.id) and not has_secret_power(message.from_user.id, "curse"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /curse @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    set_setting(f"cursed_{target['user_id']}", "1")
+    await message.answer(f"😈 Проклятие наложено на {get_mention(target['user_id'], target['first_name'])}")
+
+@router.message(Command("bless"))
+async def secret_bless(message: Message):
+    if not is_owner(message.from_user.id) and not has_secret_power(message.from_user.id, "bless"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /bless @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM settings WHERE key=%s", (f"cursed_{target['user_id']}",))
+            conn.commit()
+    await message.answer("✨ Проклятие снято.")
+
+@router.message(Command("lottery"))
+async def secret_lottery(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "lottery"):
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer("Использование: /lottery сумма")
+        return
+    prize = int(args[1])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id FROM users ORDER BY RANDOM() LIMIT 1")
+            row = cursor.fetchone()
+    if row:
+        update_balance(row[0], prize)
+        u = get_user(row[0])
+        await message.answer(f"🎉 Лотерея! {get_mention(row[0], u['first_name'])} выиграл {format_balance(prize)}!")
+    else:
+        await message.answer("Нет пользователей.")
+
+@router.message(Command("reset"))
+async def secret_reset(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "reset"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /reset @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance=4000, last_bonus=NULL, games_played=0, games_won=0 WHERE user_id=%s", (target["user_id"],))
+            cursor.execute("DELETE FROM roulette_log WHERE user_id=%s", (target["user_id"],))
+            cursor.execute("DELETE FROM user_last_bets WHERE user_id=%s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"reset {target['user_id']}")
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} полностью сброшен.")
+
+@router.message(Command("ban"))
+async def secret_ban(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "ban"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /ban @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET is_banned = TRUE WHERE user_id=%s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"ban {target['user_id']}")
+    await message.answer(f"🚫 {get_mention(target['user_id'], target['first_name'])} заблокирован.")
+
+@router.message(Command("unban"))
+async def secret_unban(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "unban"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /unban @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET is_banned = FALSE WHERE user_id=%s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"unban {target['user_id']}")
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} разблокирован.")
+
+@router.message(Command("setname"))
+async def secret_setname(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "setname"):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /setname @user новое_имя")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    new_name = " ".join(args[2:])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET first_name=%s WHERE user_id=%s", (new_name, target["user_id"]))
+            conn.commit()
+    await message.answer(f"✅ Имя изменено на {new_name}")
+
+@router.message(Command("history"))
+async def secret_history(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "history"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /history @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT bet_amount, target, win_amount, timestamp FROM roulette_log WHERE user_id=%s ORDER BY id DESC LIMIT 10",
+                (target["user_id"],)
+            )
+            rows = cursor.fetchall()
+    if not rows:
+        await message.answer("История пуста.")
+        return
+    text = f"📜 Последние 10 игр {get_mention(target['user_id'], target['first_name'])}:\n\n"
+    for r in rows:
+        bet, tgt, win, ts = r
+        text += f"🕒 {ts[:19] if ts else '-'} | Ставка: {bet}, На: {tgt}, Выигрыш: {win}\n"
+    await message.answer(text)
+
+@router.message(Command("globalbonus"))
+async def secret_globalbonus(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "globalbonus"):
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer("Использование: /globalbonus сумма")
+        return
+    amt = int(args[1])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance = balance + %s", (amt,))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"globalbonus {amt}")
+    await message.answer(f"✅ Всем пользователям начислено <b>{format_balance(amt)}</b>.")
+
+@router.message(Command("setallbal"))
+async def secret_setallbal(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "setallbal"):
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer("Использование: /setallbal сумма")
+        return
+    new_balance = int(args[1])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance = %s", (new_balance,))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"setallbal {new_balance}")
+    await message.answer(f"✅ Всем установлен баланс <b>{format_balance(new_balance)}</b>.")
+
+@router.message(Command("resetallbal"))
+async def secret_resetallbal(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "resetallbal"):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance = 4000")
+            conn.commit()
+    log_admin_action(message.from_user.id, "resetallbal")
+    await message.answer("✅ Баланс всех пользователей сброшен до 4000 ₸.")
+
+@router.message(Command("clearlog"))
+async def secret_clearlog(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "clearlog"):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("TRUNCATE TABLE admin_log")
+            conn.commit()
+    await message.answer("✅ admin_log очищен.")
+
+@router.message(Command("wipe"))
+async def secret_wipe(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "wipe"):
+        return
+    chat_roulette_bets.clear()
+    chat_last_bet_time.clear()
+    await message.answer("✅ Все ставки очищены.")
+
+@router.message(Command("checkpoint"))
+async def secret_checkpoint(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "checkpoint"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /checkpoint @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    save_balance_checkpoint(target["user_id"])
+    await message.answer(f"✅ Чекпоинт сохранён для {get_mention(target['user_id'], target['first_name'])}")
+
+@router.message(Command("restore_checkpoint"))
+async def secret_restore_checkpoint(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "restore_checkpoint"):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /restore_checkpoint @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    if restore_last_checkpoint(target["user_id"]):
+        await message.answer("✅ Баланс восстановлен из чекпоинта.")
+    else:
+        await message.answer("❌ Чекпоинт не найден.")
+
+@router.message(Command("adminlog"))
+async def view_admin_log(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "adminlog"):
+        return
+    args = message.text.split()
+    limit = 10
+    if len(args) > 1 and args[1].isdigit():
+        limit = min(int(args[1]), 50)
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT admin_id, action, target_id, amount, timestamp FROM admin_log ORDER BY id DESC LIMIT %s",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+    if not rows:
+        await message.answer("Лог пуст.")
+        return
+    text = "📜 <b>Последние действия админов</b>\n\n"
+    for r in rows:
+        admin_id, action, target_id, amount, timestamp = r
+        admin_user = get_user(admin_id)
+        admin_name = f"@{admin_user['username']}" if admin_user.get('username') else f"ID {admin_id}"
+        if admin_user.get('custom_nick'):
+            admin_name += f" ({admin_user['custom_nick']})"
+        line = f"🕒 {timestamp[:19] if timestamp else '-'} | {admin_name} | {action}"
+        if target_id:
+            target_user = get_user(target_id)
+            if target_user:
+                target_name = f"@{target_user['username']}" if target_user.get('username') else f"ID {target_id}"
+                if target_user.get('custom_nick'):
+                    target_name += f" ({target_user['custom_nick']})"
+                line += f" | цель: {target_name}"
+            else:
+                line += f" | цель ID {target_id}"
+        if amount:
+            line += f" | сумма: {format_balance(amount)}"
+        text += line + "\n"
+    await message.answer(text)
+
+@router.message(Command("sql_execute"))
+async def secret_sql(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    query = message.text.replace("/sql_execute", "").strip()
+    if not query:
+        await message.answer("Использование: /sql_execute [запрос]")
+        return
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                if cursor.description:
+                    rows = cursor.fetchall()[:10]
+                    text = "\n".join(str(r) for r in rows)
+                else:
+                    conn.commit()
+                    text = "Запрос выполнен."
+        await message.answer(f"<code>{text}</code>")
+    except Exception as e:
+        await message.answer(f"❌ {e}")
+
+@router.message(Command("emergency_stop"))
+async def secret_stop(message: Message):
+    if not is_owner(message.from_user.id) and not has_secret_power(message.from_user.id, "emergency_stop"):
+        return
+    await message.answer("🛑 Бот остановлен.")
+    await bot.session.close()
+    exit(0)
+
+@router.message(Command("backup"))
+async def secret_backup(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM users")
+            users = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor.fetchall()]
+            backup_json = json.dumps(users, default=str)
+    await message.answer_document(BufferedInputFile(backup_json.encode(), "backup.json"))
+
+@router.message(Command("givepower"))
+async def give_power(message: Message):
+    if not is_owner(message.from_user.id) and not has_secret_power(message.from_user.id, "givepower"):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /givepower @user команда")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    cmd = args[2].lower()
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO secret_powers (user_id, command_name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                (target["user_id"], cmd)
+            )
+            conn.commit()
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} получил /{cmd}")
+
+@router.message(Command("takepower"))
+async def take_power(message: Message):
+    if not is_owner(message.from_user.id) and not has_secret_power(message.from_user.id, "takepower"):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /takepower @user команда")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    cmd = args[2].lower()
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM secret_powers WHERE user_id=%s AND command_name=%s",
+                (target["user_id"], cmd)
+            )
+            conn.commit()
+    await message.answer(f"❌ Доступ к /{cmd} у {get_mention(target['user_id'], target['first_name'])} отозван.")
+
+@router.message(Command("listpowers"))
+async def list_powers(message: Message):
+    if not is_head_or_above(message.from_user.id) and not has_secret_power(message.from_user.id, "listpowers"):
+        return
+    args = message.text.split()
+    if len(args) >= 2:
+        target = find_user_by_identifier(args[1])
+        if not target:
+            await message.answer("Пользователь не найден.")
+            return
+        uid = target["user_id"]
+        name = target["first_name"]
+    else:
+        uid = message.from_user.id
+        name = message.from_user.first_name or "Игрок"
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT command_name FROM secret_powers WHERE user_id=%s", (uid,))
+            cmds = [row[0] for row in cursor.fetchall()]
+    await message.answer(f"🔑 {get_mention(uid, name)}: {', '.join(cmds) if cmds else 'нет'}")
+
+@router.message(Command("mypowers"))
+async def my_powers(message: Message):
+    user_id = message.from_user.id
+    if user_id == ADMIN_ID:
+        cmds = ["все секретные команды"]
+    else:
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT command_name FROM secret_powers WHERE user_id=%s", (user_id,))
+                cmds = [row[0] for row in cursor.fetchall()]
+    await message.answer(f"🔑 Ваши команды: {', '.join(cmds)}")
+
+@router.message(Command("deleteuser"))
+async def owner_delete_user(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /deleteuser @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    uid = target["user_id"]
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM users WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM admins WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM roulette_log WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM user_last_bets WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM daily_tasks WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM referrals WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM used_promocodes WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM balance_checkpoints WHERE user_id=%s", (uid,))
+            cursor.execute("DELETE FROM secret_powers WHERE user_id=%s", (uid,))
+            conn.commit()
+    await message.answer(f"✅ Пользователь {uid} полностью удалён.")
+
+@router.message(Command("resetallstats"))
+async def owner_reset_all_stats(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET games_played=0, games_won=0")
+            conn.commit()
+    await message.answer("✅ Статистика всех пользователей сброшена.")
+
+@router.message(Command("resetalldaily"))
+async def owner_reset_all_daily(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET last_daily = NULL")
+            conn.commit()
+    await message.answer("✅ Ежедневные задания сброшены для всех.")
+
+@router.message(Command("userid"))
+async def owner_user_id(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /userid @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    await message.answer(f"🆔 ID пользователя {target['first_name']}: <code>{target['user_id']}</code>")
+
+@router.message(Command("topwins"))
+async def owner_top_wins(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    limit = 10
+    args = message.text.split()
+    if len(args) > 1 and args[1].isdigit():
+        limit = int(args[1])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id, first_name, games_won FROM users ORDER BY games_won DESC LIMIT %s", (limit,))
+            rows = cursor.fetchall()
+    if not rows:
+        await message.answer("Нет данных.")
+        return
+    text = f"🏆 <b>Топ {len(rows)} по победам:</b>\n\n"
+    for i, row in enumerate(rows, 1):
+        user_id, first_name, wins = row
+        display_name = clean_first_name(first_name, user_id)
+        mention = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+        text += f"{i}. {mention} — <b>{wins} побед</b>\n"
+    await message.answer(text)
+
+@router.message(Command("topgames"))
+async def owner_top_games(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    limit = 10
+    args = message.text.split()
+    if len(args) > 1 and args[1].isdigit():
+        limit = int(args[1])
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id, first_name, games_played FROM users ORDER BY games_played DESC LIMIT %s", (limit,))
+            rows = cursor.fetchall()
+    if not rows:
+        await message.answer("Нет данных.")
+        return
+    text = f"🎮 <b>Топ {len(rows)} по количеству игр:</b>\n\n"
+    for i, row in enumerate(rows, 1):
+        user_id, first_name, games = row
+        display_name = clean_first_name(first_name, user_id)
+        mention = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+        text += f"{i}. {mention} — <b>{games} игр</b>\n"
+    await message.answer(text)
+
+@router.message(Command("clearlastbets"))
+async def owner_clear_last_bets(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM user_last_bets")
+            conn.commit()
+    await message.answer("✅ Сохранённые ставки всех пользователей очищены.")
+
+@router.message(Command("setadminrank"))
+async def owner_set_admin_rank(message: Message):
+    if not is_owner(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: /setadminrank @user [moder/admin/head/spadmin]")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("Пользователь не найден.")
+        return
+    rank = args[2].lower()
+    if rank not in ("moder", "admin", "head", "spadmin", "owner"):
+        await message.answer("❌ Ранг может быть moder, admin, head, spadmin.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO admins (user_id, rank) VALUES (%s,%s) ON CONFLICT (user_id) DO UPDATE SET rank = EXCLUDED.rank",
+                (target["user_id"], rank)
+            )
+            conn.commit()
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} назначен {get_rank_emoji(rank)}.")
+
+@router.message(Command("snos"))
+async def snos_user(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /snos @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    if target["user_id"] == ADMIN_ID:
+        await message.answer("❌ Нельзя снести владельца.")
+        return
+    rank = get_rank(target["user_id"])
+    if rank == "user":
+        await message.answer("❌ Пользователь не имеет должности.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS snos_log (
+                    user_id BIGINT PRIMARY KEY,
+                    previous_rank TEXT,
+                    previous_balance BIGINT,
+                    timestamp TEXT
+                )
+            """)
+            cursor.execute("""
+                INSERT INTO snos_log (user_id, previous_rank, previous_balance, timestamp)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    previous_rank = EXCLUDED.previous_rank,
+                    previous_balance = EXCLUDED.previous_balance,
+                    timestamp = EXCLUDED.timestamp
+            """, (target["user_id"], rank, target["balance"], datetime.now().isoformat()))
+            cursor.execute("DELETE FROM admins WHERE user_id = %s", (target["user_id"],))
+            cursor.execute("UPDATE users SET balance = 0 WHERE user_id = %s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"snos {target['user_id']} (rank: {rank}, balance: {target['balance']})")
+    await message.answer(f"💥 {get_mention(target['user_id'], target['first_name'])} снесён! Должность снята, баланс обнулён.")
+
+@router.message(Command("unsnos"))
+async def unsnos_user(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /unsnos @user")
+        return
+    target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT previous_rank, previous_balance FROM snos_log WHERE user_id = %s", (target["user_id"],))
+            row = cursor.fetchone()
+            if not row:
+                await message.answer("❌ Запись о сносе не найдена.")
+                return
+            previous_rank, previous_balance = row
+            cursor.execute("INSERT INTO admins (user_id, rank) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET rank = EXCLUDED.rank", (target["user_id"], previous_rank))
+            cursor.execute("UPDATE users SET balance = %s WHERE user_id = %s", (previous_balance, target["user_id"]))
+            cursor.execute("DELETE FROM snos_log WHERE user_id = %s", (target["user_id"],))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"unsnos {target['user_id']} (rank: {previous_rank}, balance: {previous_balance})")
+    await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} восстановлен: {get_rank_emoji(previous_rank)}, баланс {format_balance(previous_balance)}.")
 # ==================== ИГРЫ ====================
 # ---------- Джокер ----------
 joker_sessions = {}
