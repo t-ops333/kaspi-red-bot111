@@ -1095,7 +1095,7 @@ async def case_cmd(message: Message):
             "• космический — 100 трлн"
         )
         return
-    sub = args[1].lower()
+    sub = args[1].lower() if len(args) > 1 else ""
     if sub == "купить":
         if len(args) < 3:
             await message.answer("Укажи тип кейса. Доступные: деревянный, железный, золотой, алмазный, легендарный, мифический, космический")
@@ -1113,7 +1113,7 @@ async def case_cmd(message: Message):
         with get_db() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "INSERT INTO cases_inventory (user_id, case_type, count) VALUES (%s,%s,1) "
+                    "INSERT INTO cases_inventory (user_id, case_type, count) VALUES (%s, %s, 1) "
                     "ON CONFLICT (user_id, case_type) DO UPDATE SET count = cases_inventory.count + EXCLUDED.count",
                     (message.from_user.id, case_type)
                 )
@@ -1200,16 +1200,15 @@ async def mining_cmd(message: Message):
         text += "Забрать: <b>забрать</b>"
         await message.answer(text)
         return
-    if args[1].lower() in ["купить", "buy"]:
-        if len(args) < 4:
-            await message.answer("❌ Использование: майнинг купить &lt;тип&gt; &lt;кол-во&gt;")
-            return
+
+    if len(args) >= 4 and args[1].lower() in ["купить", "buy"]:
         card_type = args[2].lower()
         try:
             count = int(args[3])
         except ValueError:
             await message.answer("❌ Количество должно быть числом.")
             return
+
         prices = {"gt710": 1000000, "rx580": 10000000, "rtx3060": 100000000, "rtx3080": 500000000, "rtx3090": 2000000000}
         if card_type not in prices:
             await message.answer("❌ Неизвестный тип карты.\nДоступно: gt710, rx580, rtx3060, rtx3080, rtx3090")
@@ -1217,22 +1216,25 @@ async def mining_cmd(message: Message):
         if count < 1:
             await message.answer("❌ Количество должно быть больше 0.")
             return
+
         total_cost = prices[card_type] * count
         user = get_user(message.from_user.id)
         if user['balance'] < total_cost:
             await message.answer(f"❌ Недостаточно средств. Нужно {format_balance(total_cost)}")
             return
+
         update_balance(message.from_user.id, -total_cost)
         with get_db() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "INSERT INTO miners (user_id, card_type, count) VALUES (%s,%s,%s) "
+                    "INSERT INTO miners (user_id, card_type, count) VALUES (%s, %s, %s) "
                     "ON CONFLICT (user_id, card_type) DO UPDATE SET count = miners.count + EXCLUDED.count",
-                    (message.from_user.id, card_type, count, count)
+                    (message.from_user.id, card_type, count)
                 )
                 conn.commit()
         await message.answer(f"✅ Куплено {count} шт. {card_type}.\nСписано: {format_balance(total_cost)}")
         return
+
     await message.answer("❌ Неизвестная команда.\nИспользуй:\nмайнинг — посмотреть ферму\nмайнинг купить &lt;тип&gt; &lt;кол-во&gt;")
 
 @router.message(F.text.lower().startswith(("забрать", "collect")))
