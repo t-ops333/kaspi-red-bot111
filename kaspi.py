@@ -3342,3 +3342,6 @@ async def main():
     await web_server()
     logging.info("Бот Kaspi Red запущен!")
     await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
