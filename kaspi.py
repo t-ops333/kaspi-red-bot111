@@ -918,8 +918,17 @@ async def cmd_vip_buy(message: Message):
             conn.commit()
     await message.answer(f"✅ VIP активирован до {new_until.strftime('%d.%m.%Y %H:%M')}")
 
+# Текстовые команды без слэша для VIP
+@router.message(F.text.lower() == "vip")
+async def cmd_vip_text(message: Message):
+    await cmd_vip(message)
+
+@router.message(F.text.lower().startswith("vip_buy"))
+async def cmd_vip_buy_text(message: Message):
+    await cmd_vip_buy(message)
+
 # ---------- Кланы ----------
-@router.message(F.text.lower().in_(["clan", "клан"]))
+@router.message(F.text.lower().startswith(("clan", "клан")))
 async def clan_cmd(message: Message):
     args = message.text.split()
     if len(args) < 2:
@@ -1068,7 +1077,7 @@ async def safe_cmd(message: Message):
         text += f"💎 BTC: {btc:.4f}\n"
     await message.answer(text)
 
-@router.message(F.text.lower().in_(["кейс", "case"]))
+@router.message(F.text.lower().startswith(("кейс", "case")))
 async def case_cmd(message: Message):
     args = message.text.split()
     if len(args) < 2:
@@ -1158,7 +1167,7 @@ async def btc_cmd(message: Message):
     rate = int(get_setting("btc_rate", "1000000000"))
     await message.answer(f"Курс BTC: 1 BTC = {format_balance(rate)}\nТвой BTC: {user['btc']:.4f}")
 
-@router.message(F.text.lower().in_(["майнинг", "mining"]))
+@router.message(F.text.lower().startswith(("майнинг", "mining")))
 async def mining_cmd(message: Message):
     args = message.text.split()
     if len(args) < 2:
@@ -1226,7 +1235,7 @@ async def mining_cmd(message: Message):
         return
     await message.answer("❌ Неизвестная команда.\nИспользуй:\nмайнинг — посмотреть ферму\nмайнинг купить &lt;тип&gt; &lt;кол-во&gt;")
 
-@router.message(F.text.lower().in_(["забрать", "collect"]))
+@router.message(F.text.lower().startswith(("забрать", "collect")))
 async def collect_mining(message: Message):
     accumulated = update_mining_accumulated(message.from_user.id)
     if accumulated <= 0:
@@ -1240,7 +1249,7 @@ async def collect_mining(message: Message):
             conn.commit()
     await message.answer(f"Забрано {btc_amount:.8f} BTC.")
 
-@router.message(F.text.lower().in_(["продать", "sell"]))
+@router.message(F.text.lower().startswith(("продать", "sell")))
 async def sell_btc(message: Message):
     args = message.text.split()
     user = get_user(message.from_user.id)
