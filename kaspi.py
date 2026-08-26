@@ -3474,3 +3474,31 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+# ---------- СЛЭШ-КОМАНДЫ ДЛЯ ГАРАНТИИ ----------
+@router.message(Command("кейс"))
+async def cmd_case_slash(message: Message):
+    await case_cmd(message)
+
+@router.message(Command("майнинг"))
+async def cmd_mining_slash(message: Message):
+    await mining_cmd(message)
+
+@router.message(Command("сейф"))
+async def cmd_safe_slash(message: Message):
+    await safe_cmd(message)
+
+@router.message(Command("btc"))
+async def cmd_btc_slash(message: Message):
+    await btc_cmd(message)
+
+@router.message(Command("забрать"))
+async def cmd_collect_slash(message: Message):
+    await collect_mining(message)
+
+@router.message(Command("продать"))
+async def cmd_sell_slash(message: Message):
+    await sell_btc(message)
+
+@router.message(Command("clan"))
+async def cmd_clan_slash(message: Message):
+    await clan_cmd(message)
