@@ -1,5 +1,3 @@
-# Часть 1: весь код до игр (включая админки и секретные команды, с исправлениями)
-
 import asyncio
 import logging
 import random
@@ -187,13 +185,13 @@ def get_rank(user_id: int) -> str:
             return row[0] if row else "user"
 
 def get_rank_emoji(rank: str) -> str:
-    return {"owner": "💎 Владелец", "head": "👑 Главный администратор", "admin": "🔰 Администратор", "spadmin": "👑 Special Administrator", "chatowner": "👥 Chat Owner", "moder": "⭐ Модератор"}.get(rank, "")
+    return {"owner": "💎 Владелец", "head": "👑 Главный администратор", "admin": "🔰 Администратор", "spadmin": "👑 Special Administrator", "moder": "⭐ Модератор"}.get(rank, "")
 
 def is_admin(user_id: int) -> bool:
-    return get_rank(user_id) in ("owner", "head", "admin", "moder", "spadmin", "chatowner")
+    return get_rank(user_id) in ("owner", "head", "admin", "moder", "spadmin")
 
 def is_moder_or_above(user_id: int) -> bool:
-    return get_rank(user_id) in ("owner", "head", "admin", "moder", "spadmin", "chatowner")
+    return get_rank(user_id) in ("owner", "head", "admin", "moder", "spadmin")
 
 def is_admin_or_above(user_id: int) -> bool:
     return get_rank(user_id) in ("owner", "head", "admin")
@@ -582,8 +580,7 @@ async def process_bonus_logic(user_id: int, first_name: str, is_group_context: b
     mention = get_mention(user_id, user['first_name'])
     updated_user = get_user(user_id)
     return f"🎁 {mention} получил бонус <b>{format_balance(b_amt)}</b> 💰!\n\n👤 {mention}\n💰 Баланс: {format_balance(updated_user['balance'])}"
-
-# ---------- Основные команды ----------
+    # ---------- Основные команды ----------
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -616,10 +613,10 @@ async def cmd_start(message: Message):
         except:
             pass
     if in_group(message):
-        await message.answer("Привет! Я бот Kaspi Red. Напиши мне в личные сообщения для главного меню.")
+        await message.answer("Привет! Я бот NurGame. Напиши мне в личные сообщения для главного меню.")
         return
     welcome_text = (
-        "👋 Добро пожаловать в Kaspi Red!\n\n"
+        "👋 Добро пожаловать в NurGame!\n\n"
         "🎰 Игры: Рулетка, Джокер, Мины, Дуэли, Фортуна\n"
         "💎 Валюта: ₸ (тенге) и BTC\n"
         "💰 Начальный баланс: 4 000 ₸\n\n"
@@ -630,24 +627,24 @@ async def cmd_start(message: Message):
 
 @router.message(F.text == "📢 Новости")
 async def cmd_news_btn(message: Message):
-    await message.answer("Подпишись на канал: https://t.me/kaspired_game")
+    await message.answer("Подпишись на канал: https://t.me/nurgame_news")
 
 @router.message(F.text == "💬 Чат")
 async def cmd_chat_btn(message: Message):
-    await message.answer("Общий чат: https://t.me/kaspired_chat")
+    await message.answer("Общий чат: https://t.me/nurgame_chat")
 
 @router.message(F.text == "💬 Чаты")
 async def cmd_chats(message: Message):
-    await message.answer("Чаты:\n1: https://t.me/kaspired_chat\n2: https://t.me/kaspired_chat_2")
+    await message.answer("Чаты:\n1: https://t.me/nurgame_chat\n2: https://t.me/nurgame_chat2")
 
 @router.message(F.text == "🛒 Донат")
 async def cmd_donate(message: Message):
-    await message.answer("Для покупки тенге или VIP пиши @se7ze.")
+    await message.answer("Для поддержки проекта пиши @se7ze.")
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "📋 <b>Справка по Kaspi Red</b>\n\n"
+        "📋 <b>Справка по NurGame</b>\n\n"
         "• [ставка] [объекты...] — Рулетка\n"
         "• лог — История рулетки\n"
         "• ставки — Текущие ставки\n"
@@ -666,6 +663,7 @@ async def cmd_help(message: Message):
         "• ограбить — Ограбить казино (треб. 500 000)\n"
         "• сейф — Посмотреть кейсы и BTC\n"
         "• майнинг — Майнинг ферма\n"
+        "• майнинг магазин — Список видеокарт\n"
         "• клан — Кланы\n"
         "• /top — Топ игроков\n"
         "• /promo [код] — Промокод\n"
@@ -1167,6 +1165,28 @@ async def btc_cmd(message: Message):
     rate = int(get_setting("btc_rate", "1000000000"))
     await message.answer(f"Курс BTC: 1 BTC = {format_balance(rate)}\nТвой BTC: {user['btc']:.4f}")
 
+@router.message(F.text.lower().startswith(("майнинг магазин", "магазин майнинг", "mining shop")))
+async def mining_shop(message: Message):
+    prices = {
+        "gt710": 1000000,
+        "rx580": 10000000,
+        "rtx3060": 100000000,
+        "rtx3080": 500000000,
+        "rtx3090": 2000000000
+    }
+    hash_rates = {
+        "gt710": 0.00001,
+        "rx580": 0.00005,
+        "rtx3060": 0.0002,
+        "rtx3080": 0.0005,
+        "rtx3090": 0.002
+    }
+    text = "🛒 <b>Магазин видеокарт</b>\n\n"
+    for card, price in prices.items():
+        text += f"• {card} — {format_balance(price)} (hashrate: {hash_rates[card]} BTC/час)\n"
+    text += "\nДля покупки: майнинг купить &lt;тип&gt; &lt;кол-во&gt;\nЛимит: 10 видеокарт всего"
+    await message.answer(text)
+
 @router.message(F.text.lower().startswith(("майнинг", "mining")))
 async def mining_cmd(message: Message):
     args = message.text.split()
@@ -1181,12 +1201,7 @@ async def mining_cmd(message: Message):
                 "⛏ У тебя нет видеокарт.\n"
                 "Купи через команду:\n"
                 "майнинг купить &lt;тип&gt; &lt;кол-во&gt;\n\n"
-                "Доступные типы:\n"
-                "• gt710 — 1 000 000 ₸ (0.00001 BTC/час)\n"
-                "• rx580 — 10 000 000 ₸ (0.00005 BTC/час)\n"
-                "• rtx3060 — 100 000 000 ₸ (0.0002 BTC/час)\n"
-                "• rtx3080 — 500 000 000 ₸ (0.0005 BTC/час)\n"
-                "• rtx3090 — 2 000 000 000 ₸ (0.002 BTC/час)"
+                "Список доступных: майнинг магазин"
             )
             return
         total_hash = get_mining_hash(message.from_user.id)
@@ -1197,7 +1212,8 @@ async def mining_cmd(message: Message):
             text += f"• {card_type} ×{cnt}: {rate * cnt:.8f} BTC/час\n"
         text += f"\nВсего: {total_hash:.8f} BTC/час\n"
         text += f"Накоплено: {accumulated:.8f} BTC\n"
-        text += "Забрать: <b>забрать</b>"
+        text += "Забрать: <b>забрать</b>\n"
+        text += "Магазин: <b>майнинг магазин</b>"
         await message.answer(text)
         return
 
@@ -1215,6 +1231,15 @@ async def mining_cmd(message: Message):
             return
         if count < 1:
             await message.answer("❌ Количество должно быть больше 0.")
+            return
+
+        # Проверка общего количества карт (лимит 10)
+        with get_db() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COALESCE(SUM(count),0) FROM miners WHERE user_id = %s", (message.from_user.id,))
+                current_cards = cursor.fetchone()[0]
+        if current_cards + count > 10:
+            await message.answer("❌ Нельзя иметь больше 10 видеокарт суммарно.")
             return
 
         total_cost = prices[card_type] * count
@@ -1235,7 +1260,7 @@ async def mining_cmd(message: Message):
         await message.answer(f"✅ Куплено {count} шт. {card_type}.\nСписано: {format_balance(total_cost)}")
         return
 
-    await message.answer("❌ Неизвестная команда.\nИспользуй:\nмайнинг — посмотреть ферму\nмайнинг купить &lt;тип&gt; &lt;кол-во&gt;")
+    await message.answer("❌ Неизвестная команда.\nИспользуй:\nмайнинг — посмотреть ферму\nмайнинг купить &lt;тип&gt; &lt;кол-во&gt;\nмайнинг магазин — список карт")
 
 @router.message(F.text.lower().startswith(("забрать", "collect")))
 async def collect_mining(message: Message):
@@ -1500,16 +1525,16 @@ async def admin_add(message: Message):
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("❌ Использование: /add_admin @username [moder/admin/head/spadmin/chatowner]")
+        await message.answer("❌ Использование: /add_admin @username [moder/admin/head/spadmin]")
         return
     target = find_user_by_identifier(args[1])
     if not target:
         await message.answer("❌ Пользователь не найден.")
         return
-    allowed_ranks = ("moder", "admin", "head", "spadmin", "chatowner")
+    allowed_ranks = ("moder", "admin", "head", "spadmin")
     rank = args[2] if len(args) > 2 and args[2] in allowed_ranks else "moder"
-    if rank in ("spadmin", "chatowner") and not is_owner(message.from_user.id):
-        await message.answer("❌ Только владелец может назначать этот ранг.")
+    if rank in ("spadmin",) and not is_owner(message.from_user.id):
+        await message.answer("❌ Только владелец может назначать spadmin.")
         return
     with get_db() as conn:
         with conn.cursor() as cursor:
@@ -1632,7 +1657,7 @@ async def admin_list(message: Message):
         return
     with get_db() as conn:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT user_id, rank FROM admins ORDER BY CASE rank WHEN 'owner' THEN 0 WHEN 'head' THEN 1 WHEN 'spadmin' THEN 2 WHEN 'admin' THEN 3 WHEN 'chatowner' THEN 4 WHEN 'moder' THEN 5 END")
+            cursor.execute("SELECT user_id, rank FROM admins ORDER BY CASE rank WHEN 'owner' THEN 0 WHEN 'head' THEN 1 WHEN 'spadmin' THEN 2 WHEN 'admin' THEN 3 WHEN 'moder' THEN 4 END")
             rows = cursor.fetchall()
     text = "🛡 <b>Список администраторов:</b>\n"
     for r in rows:
@@ -1678,7 +1703,7 @@ async def admin_stats(message: Message):
 
 @router.message(Command("broadcast"))
 async def admin_broadcast(message: Message):
-    if not is_admin_or_above(message.from_user.id):
+    if not is_head_or_above(message.from_user.id):
         return
     text = message.text.replace("/broadcast", "").strip()
     if not text:
@@ -2464,7 +2489,7 @@ async def unsnos_user(message: Message):
             conn.commit()
     log_admin_action(message.from_user.id, f"unsnos {target['user_id']} (rank: {previous_rank}, balance: {previous_balance})")
     await message.answer(f"✅ {get_mention(target['user_id'], target['first_name'])} восстановлен: {get_rank_emoji(previous_rank)}, баланс {format_balance(previous_balance)}.")
-# ==================== ИГРЫ ====================
+    # ==================== ИГРЫ ====================
 # ---------- Джокер ----------
 joker_sessions = {}
 JOKER_MULTIS = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0]
@@ -3342,7 +3367,7 @@ async def main():
     dp.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
     await web_server()
-    logging.info("Бот Kaspi Red запущен!")
+    logging.info("Бот NurGame запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
