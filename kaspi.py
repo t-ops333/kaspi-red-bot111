@@ -1055,7 +1055,17 @@ async def clan_cmd(message: Message):
         for i, r in enumerate(rows, 1):
             text += f"{i}. {r[1]} — {format_balance(r[2])}\n"
         await message.answer(text)
-
+    else:
+        await message.answer(
+            "🏰 <b>Кланы</b>\n\n"
+            "Создать клан: clan создать <название> (англ., 100 млн ₸)\n"
+            "Вступить: clan вступить <название или id>\n"
+            "Выйти: clan выйти\n"
+            "Инфо: clan инфо\n"
+            "Пополнить казну: clan казна <сумма>\n"
+            "Снять из казны (владелец): clan снять <сумма>\n"
+            "Топ кланов: clan топ"
+        )
 # ---------- Сейф и кейсы ----------
 @router.message(F.text.lower().in_(["сейф", "safe"]))
 async def safe_cmd(message: Message):
@@ -1411,6 +1421,32 @@ async def admin_addpromo(message: Message):
     log_admin_action(message.from_user.id, f"addpromo {code} {amount} {uses}")
     await message.answer(f"✅ Промокод <b>{code}</b> создан/обновлён: <b>{format_balance(amount)}</b>, исп: <b>{uses}</b>.")
 
+@router.message(Command("clearminers"))
+async def clear_miners(message: Message):
+    if not is_head_or_above(message.from_user.id):
+        return
+    # Цель из reply или из аргумента
+    if message.reply_to_message:
+        target = get_user(message.reply_to_message.from_user.id)
+    else:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /clearminers @user или ответьте на сообщение")
+            return
+        target = find_user_by_identifier(args[1])
+    if not target:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    # Удаляем все видеокарты пользователя
+    with get_db() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM miners WHERE user_id = %s", (target["user_id"],))
+            # Также обнуляем накопленный BTC
+            cursor.execute("UPDATE mining_stats SET accumulated_btc = 0, last_update = %s WHERE user_id = %s", (datetime.now(), target["user_id"]))
+            conn.commit()
+    log_admin_action(message.from_user.id, f"clearminers {target['user_id']}")
+    await message.answer(f"✅ Все видеокарты пользователя {get_mention(target['user_id'], target['first_name'])} сброшены.")
+
 @router.message(Command("delpromo"))
 async def admin_delpromo(message: Message):
     if not is_admin_or_above(message.from_user.id):
@@ -1448,22 +1484,28 @@ async def admin_setbal(message: Message):
 async def admin_info(message: Message):
     if not is_moder_or_above(message.from_user.id):
         return
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Использование: /info @username")
-        return
-    target = find_user_by_identifier(args[1])
+    # Если команда вызвана ответом на сообщение
+    if message.reply_to_message:
+        target = get_user(message.reply_to_message.from_user.id)
+    else:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /info @username или ответьте на сообщение пользователя")
+            return
+        target = find_user_by_identifier(args[1])
     if not target:
         await message.answer("❌ Пользователь не найден.")
         return
     rank = get_rank(target['user_id'])
-    text = (f"👤 <b>{target['first_name']}</b>\n"
-            f"🆔 ID: {target['user_id']}\n"
-            f"👤 Username: @{target['username'] or 'нет'}\n"
-            f"📊 Ранг: {get_rank_emoji(rank)}\n"
-            f"💰 Баланс: <b>{format_balance(target['balance'])}</b>\n"
-            f"🎮 Игр: {target['games_played']} | Побед: {target['games_won']}\n"
-            f"🕒 Последний бонус: {target['last_bonus'] or 'никогда'}")
+    text = (
+        f"👤 <b>{target['first_name']}</b>\n"
+        f"🆔 ID: {target['user_id']}\n"
+        f"👤 Username: @{target['username'] or 'нет'}\n"
+        f"📊 Ранг: {get_rank_emoji(rank)}\n"
+        f"💰 Баланс: <b>{format_balance(target['balance'])}</b>\n"
+        f"🎮 Игр: {target['games_played']} | Побед: {target['games_won']}\n"
+        f"🕒 Последний бонус: {target['last_bonus'] or 'никогда'}"
+    )
     await message.answer(text)
 
 @router.message(F.text.lower().startswith("выдать "))
@@ -1610,11 +1652,15 @@ async def remove_moder_cmd(message: Message):
 async def freeze_user(message: Message):
     if not (is_head_or_above(message.from_user.id) or get_rank(message.from_user.id) == "spadmin"):
         return
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Использование: /freeze @user")
-        return
-    target = find_user_by_identifier(args[1])
+    # Если команда вызвана ответом на сообщение
+    if message.reply_to_message:
+        target = get_user(message.reply_to_message.from_user.id)
+    else:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /freeze @user или ответьте на сообщение")
+            return
+        target = find_user_by_identifier(args[1])
     if not target:
         await message.answer("❌ Пользователь не найден.")
         return
@@ -1636,11 +1682,15 @@ async def freeze_user(message: Message):
 async def unfreeze_user(message: Message):
     if not (is_head_or_above(message.from_user.id) or get_rank(message.from_user.id) == "spadmin"):
         return
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Использование: /unfreeze @user")
-        return
-    target = find_user_by_identifier(args[1])
+    # Если команда вызвана ответом на сообщение
+    if message.reply_to_message:
+        target = get_user(message.reply_to_message.from_user.id)
+    else:
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("Использование: /unfreeze @user или ответьте на сообщение")
+            return
+        target = find_user_by_identifier(args[1])
     if not target:
         await message.answer("❌ Пользователь не найден.")
         return
